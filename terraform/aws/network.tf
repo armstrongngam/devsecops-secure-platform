@@ -2,8 +2,15 @@
 # The node is still unreachable from the internet: its security group has
 # no inbound rules, and administration happens through SSM Session Manager.
 
+# Pin the zone by name so the result can't change when AWS adds zones
+# (CKV_AWS_394). The data source still fails the plan if the zone is unavailable.
 data "aws_availability_zones" "available" {
   state = "available"
+
+  filter {
+    name   = "zone-name"
+    values = [var.availability_zone]
+  }
 }
 
 resource "aws_vpc" "main" {
