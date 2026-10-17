@@ -1,5 +1,5 @@
-# AI triage service. Tokens come from the ai-ops-tokens Secret, which is
-# created by scripts/bootstrap-ai-ops.sh and never stored in Git.
+# AI triage service. Tokens come from the ai-ops-tokens Secret, mounted as
+# files; it is created by scripts/bootstrap-ai-ops.sh and never stored in Git.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -21,6 +21,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        fsGroup: 10001 # lets the non-root user read the mounted Secret files
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -34,12 +35,7 @@ spec:
             - { name: OLLAMA_MODEL, value: "qwen2.5:3b" }
             - { name: OLLAMA_TIMEOUT, value: "120" }
             - { name: EDA_URL, value: "http://192.168.10.10:5000/endpoint" }
-            - name: INGEST_TOKEN
-              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: ingest-token } }
-            - name: APPROVER_TOKEN
-              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: approver-token } }
-            - name: EDA_TOKEN
-              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: eda-token } }
+            - { name: SECRETS_DIR, value: /var/run/secrets/ai-ops }
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -57,10 +53,17 @@ spec:
             periodSeconds: 20
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
+            - { name: tokens, mountPath: /var/run/secrets/ai-ops, readOnly: true }
       volumes:
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
+        # Tokens as read-only files (0440) rather than environment variables:
+        # env vars leak through crash dumps, /proc and child processes.
+        - name: tokens
+          secret:
+            secretName: ai-ops-tokens
+            defaultMode: 0440
 ---
 apiVersion: v1
 kind: Service

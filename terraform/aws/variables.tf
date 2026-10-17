@@ -4,6 +4,12 @@ variable "aws_region" {
   default     = "us-east-2"
 }
 
+variable "availability_zone" {
+  description = "Availability Zone for the lab subnet. Must be in aws_region."
+  type        = string
+  default     = "us-east-2a"
+}
+
 variable "project" {
   description = "Name prefix for all resources."
   type        = string

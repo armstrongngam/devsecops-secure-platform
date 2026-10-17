@@ -66,6 +66,21 @@ class IncidentStore:
             return list(reversed(self._items.values()))
 
 
+def _secret(name: str) -> str:
+    """Read a secret from its mounted file, falling back to the environment.
+
+    Kubernetes mounts the ai-ops-tokens Secret as files under SECRETS_DIR, so
+    tokens never appear in the process environment (CKV_K8S_35). The env
+    fallback keeps local runs and tests simple.
+    """
+    path = os.path.join(os.environ.get("SECRETS_DIR", "/var/run/secrets/ai-ops"), name)
+    try:
+        with open(path, encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return os.environ.get(name.upper().replace("-", "_"), "")
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -83,13 +98,13 @@ def create_app(
     )
     dispatcher = dispatcher or EdaDispatcher(
         os.environ.get("EDA_URL", "http://192.168.10.10:5000/endpoint"),
-        os.environ.get("EDA_TOKEN", ""),
+        _secret("eda-token"),
     )
     store = store or IncidentStore()
     # One worker: a CPU-only model handles one alert at a time.
     executor = ThreadPoolExecutor(max_workers=1)
-    ingest_token = ingest_token if ingest_token is not None else os.environ.get("INGEST_TOKEN", "")
-    approver_token = approver_token if approver_token is not None else os.environ.get("APPROVER_TOKEN", "")
+    ingest_token = ingest_token if ingest_token is not None else _secret("ingest-token")
+    approver_token = approver_token if approver_token is not None else _secret("approver-token")
 
     def require_token(expected: str) -> None:
         sent = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
