@@ -1,0 +1,44 @@
+# Apply after kube-prometheus-stack is installed (needs its CRDs).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: secure-app
+  namespace: secure-app
+spec:
+  selector:
+    matchLabels:
+      app: secure-app
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: secure-app-alerts
+  namespace: secure-app
+spec:
+  groups:
+    - name: secure-app
+      rules:
+        - alert: SecureAppDown
+          expr: absent(up{namespace="secure-app"} == 1)
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "secure-app has no healthy targets"
+        - alert: SecureAppHighErrorRate
+          expr: |
+            sum(rate(app_requests_total{status=~"5.."}[5m]))
+              / clamp_min(sum(rate(app_requests_total[5m])), 1e-9) > 0.05
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "More than 5% of secure-app requests are failing"
+        - alert: SecureAppProbing
+          expr: sum(rate(app_requests_total{status="404"}[5m])) > 1
+          for: 5m
+          labels: { severity: info }
+          annotations:
+            summary: "Sustained 404s: possible path enumeration against secure-app"

@@ -1,0 +1,27 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.terraform.lock.hcl.bak
+
+# Ansible
+ansible/inventory/hosts.ini
+ansible/reports/
+*.retry
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Secrets and local files
+.env
+*.pem
+*.key
+kubeconfig*
+.DS_Store

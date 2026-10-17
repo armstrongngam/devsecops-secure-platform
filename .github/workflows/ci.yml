@@ -1,0 +1,247 @@
+# Secure delivery pipeline for both services (secure-app and ai-triage).
+# Every change passes six gates before an image can reach the cluster:
+#   1. unit tests + lint   4. IaC / Dockerfile / k8s misconfig scan (Checkov)
+#   2. secret scan         5. container vulnerability scan (Trivy)
+#   3. SAST (Semgrep)      6. SBOM + keyless signature (Syft + Cosign)
+# On main, each signed image digest is written into its kustomization
+# and Argo CD deploys it.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["docs/**", "**.md"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    name: Tests and lint (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: secure-app, dir: app }
+          - { service: ai-triage, dir: ai-ops/triage }
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ${{ matrix.dir }}/requirements*.txt
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+
+  secrets:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+      - run: >-
+          semgrep scan
+          --config p/python --config p/flask --config p/dockerfile
+          --error --sarif --output semgrep.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  iac:
+    name: IaC scan (Checkov)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: .
+          framework: terraform,kubernetes,dockerfile,github_actions
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  build:
+    name: Build, scan, sign (${{ matrix.service }})
+    needs: [test, secrets, sast, iac]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: secure-app, dir: app }
+          - { service: ai-triage, dir: ai-ops/triage }
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless signing via Sigstore
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: vars
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image locally
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.dir }}
+          load: true
+          tags: ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Vulnerability scan (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Trivy SARIF report
+        if: always()
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.vars.outputs.image }}:${{ github.sha }}
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-${{ matrix.service }}
+
+      # Everything below runs only for main: publish, SBOM, sign.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        id: push
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.dir }}
+          push: true
+          tags: |
+            ${{ steps.vars.outputs.image }}:${{ github.sha }}
+            ${{ steps.vars.outputs.image }}:latest
+          build-args: |
+            APP_VERSION=${{ github.ref_name }}
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+
+      - name: Generate SBOM
+        if: steps.push.outcome == 'success'
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.vars.outputs.image }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - uses: sigstore/cosign-installer@v3
+        if: steps.push.outcome == 'success'
+
+      - name: Sign image and attach SBOM attestation
+        if: steps.push.outcome == 'success'
+        env:
+          REF: ${{ steps.vars.outputs.image }}@${{ steps.push.outputs.digest }}
+        run: |
+          cosign sign --yes "$REF"
+          cosign attest --yes --type spdxjson --predicate sbom.spdx.json "$REF"
+
+      - name: Record the signed reference for the deploy job
+        if: steps.push.outcome == 'success'
+        run: |
+          mkdir -p digest
+          echo "${{ steps.vars.outputs.image }}@${{ steps.push.outputs.digest }}" > "digest/${{ matrix.service }}"
+
+      - uses: actions/upload-artifact@v4
+        if: steps.push.outcome == 'success'
+        with:
+          name: digest-${{ matrix.service }}
+          path: digest/${{ matrix.service }}
+          retention-days: 1
+
+  deploy:
+    name: Promote signed digests (GitOps)
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: digest-*
+          path: digests
+          merge-multiple: true
+      - name: Pin manifests to the signed digests
+        run: |
+          for f in digests/*; do
+            service=$(basename "$f")
+            case "$service" in
+              secure-app) dir=k8s/app ;;
+              ai-triage)  dir=k8s/ai-ops ;;
+              *) echo "unknown service $service"; exit 1 ;;
+            esac
+            (cd "$dir" && kustomize edit set image "$service=$(cat "../../$f")")
+          done
+      - name: Commit
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s/app/kustomization.yaml k8s/ai-ops/kustomization.yaml
+          git diff --cached --quiet && exit 0
+          git commit -m "deploy: pin signed image digests (${GITHUB_SHA::7})"
+          git push

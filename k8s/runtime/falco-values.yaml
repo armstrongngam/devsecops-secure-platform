@@ -1,0 +1,47 @@
+# helm upgrade --install falco falcosecurity/falco -n falco --create-namespace -f k8s/runtime/falco-values.yaml
+driver:
+  kind: modern_ebpf
+
+falcosidekick:
+  enabled: true
+  webui:
+    enabled: true
+
+customRules:
+  secure-app-rules.yaml: |-
+    - rule: Shell Spawned in Secure App
+      desc: An interactive shell started inside the secure-app namespace. The image has no reason to run one.
+      condition: >
+        spawned_process and container
+        and k8s.ns.name = "secure-app"
+        and proc.name in (shell_binaries)
+      output: >
+        Shell in secure-app (user=%user.name pod=%k8s.pod.name
+        cmd=%proc.cmdline parent=%proc.pname image=%container.image.repository)
+      priority: WARNING
+      tags: [container, shell, mitre_execution]
+
+    - rule: Package Manager Run in Secure App
+      desc: Someone tried to install software in a running app container.
+      condition: >
+        spawned_process and container
+        and k8s.ns.name = "secure-app"
+        and proc.name in (apt, apt-get, dpkg, pip, pip3, apk, dnf, yum)
+      output: >
+        Package manager in secure-app (pod=%k8s.pod.name cmd=%proc.cmdline
+        image=%container.image.repository)
+      priority: ERROR
+      tags: [container, mitre_persistence]
+
+    - rule: Outbound Connection From Secure App
+      desc: The app only answers requests; it should never open outbound connections.
+      condition: >
+        evt.type = connect and evt.dir = < and container
+        and k8s.ns.name = "secure-app"
+        and fd.typechar = 4 and fd.ip != "0.0.0.0"
+        and not fd.snet in ("10.0.0.0/8")
+      output: >
+        Unexpected outbound connection from secure-app
+        (pod=%k8s.pod.name dest=%fd.name proc=%proc.cmdline)
+      priority: WARNING
+      tags: [network, mitre_command_and_control]

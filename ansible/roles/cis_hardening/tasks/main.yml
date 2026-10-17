@@ -1,0 +1,243 @@
+---
+# CIS Benchmark Level 1 controls for RHEL 9 / Rocky 9 / AlmaLinux 9.
+# Section numbers in comments map to the CIS RHEL 9 benchmark.
+
+- name: Confirm a supported OS
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['os_family'] == "RedHat"
+      - ansible_facts['distribution_major_version'] == "9"
+    fail_msg: "This role targets RHEL 9 family hosts."
+
+# Python libraries that Ansible modules need on the server itself.
+# check_mode: false installs them even during --check, or later tasks cannot be simulated.
+- name: Install Python libraries for Ansible modules
+  ansible.builtin.dnf:
+    name: [python3-libselinux, python3-policycoreutils]
+    state: present
+  check_mode: false
+
+# ---------- 1.2 Software updates ----------
+- name: Apply all security updates
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    security: true
+    update_only: true
+
+- name: Install security tooling
+  ansible.builtin.dnf:
+    name:
+      - aide
+      - audit
+      - chrony
+      - firewalld
+      - dnf-automatic
+      - policycoreutils-python-utils
+      - libpwquality
+    state: present
+
+- name: Remove insecure legacy clients and services
+  ansible.builtin.dnf:
+    name: [telnet, telnet-server, rsh, rsh-server, tftp, tftp-server, ypbind, xinetd]
+    state: absent
+
+- name: Configure automatic security updates
+  community.general.ini_file:
+    path: /etc/dnf/automatic.conf
+    section: commands
+    option: "{{ item.key }}"
+    value: "{{ item.value }}"
+    mode: "0644"
+  loop:
+    - { key: upgrade_type, value: security }
+    - { key: apply_updates, value: "yes" }
+
+- name: Enable automatic update timer
+  ansible.builtin.systemd:
+    name: dnf-automatic.timer
+    enabled: true
+    state: started
+  # In --check mode dnf-automatic is not really installed yet, so the unit is missing.
+  ignore_errors: "{{ ansible_check_mode }}"
+
+# ---------- 1.1 Unused kernel modules ----------
+- name: Disable unused filesystems and network protocols
+  ansible.builtin.copy:
+    dest: /etc/modprobe.d/cis-hardening.conf
+    mode: "0644"
+    content: |
+      {% for m in hardening_disabled_modules %}
+      install {{ m }} /bin/false
+      blacklist {{ m }}
+      {% endfor %}
+
+# ---------- 1.6 SELinux ----------
+- name: Enforce SELinux
+  ansible.posix.selinux:
+    policy: targeted
+    state: enforcing
+
+# ---------- 3.3 Network kernel parameters ----------
+- name: Apply network and kernel sysctl hardening
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/60-cis-hardening.conf
+    reload: true
+  loop: "{{ hardening_sysctl | dict2items }}"
+
+# ---------- 3.4 Host firewall ----------
+- name: Enable firewalld
+  ansible.builtin.service:
+    name: firewalld
+    enabled: true
+    state: started
+
+- name: Allow SSH
+  ansible.posix.firewalld:
+    service: ssh
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Close default services this server does not use
+  ansible.posix.firewalld:
+    service: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: disabled
+  loop: "{{ hardening_firewall_remove_services }}"
+
+- name: Open extra ports for this host's role
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop: "{{ hardening_firewall_ports }}"
+
+# ---------- 5.1 SSH server ----------
+# Do this BEFORE restricting SSH to the wheel group, or you lock yourself out.
+- name: Make sure the Ansible admin user can still log in
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: "{{ hardening_ssh_allow_groups }}"
+    append: true
+
+- name: SSH hardening drop-in
+  ansible.builtin.template:
+    src: sshd-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/10-cis-hardening.conf
+    mode: "0600"
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Restart sshd
+
+- name: Login warning banner
+  ansible.builtin.copy:
+    dest: "{{ item }}"
+    mode: "0644"
+    content: |
+      Authorized use only. Activity on this system is monitored and logged.
+  loop: [/etc/issue, /etc/issue.net]
+
+# ---------- 5.4 Password policy ----------
+- name: Password quality rules
+  ansible.builtin.lineinfile:
+    path: /etc/security/pwquality.conf
+    regexp: "^#?\\s*{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+  loop:
+    - { key: minlen, value: "{{ hardening_password_min_length }}" }
+    - { key: minclass, value: 4 }
+    - { key: maxrepeat, value: 3 }
+
+- name: Lock accounts after 5 failed logins
+  ansible.builtin.lineinfile:
+    path: /etc/security/faillock.conf
+    regexp: "^#?\\s*{{ item.key }}\\s*="
+    line: "{{ item.key }} = {{ item.value }}"
+  loop:
+    - { key: deny, value: 5 }
+    - { key: unlock_time, value: 900 }
+
+# ---------- 2.1 Time sync ----------
+- name: Enable chrony
+  ansible.builtin.service:
+    name: chronyd
+    enabled: true
+    state: started
+
+- name: Set the system time zone (UTC keeps logs comparable across servers)
+  community.general.timezone:
+    name: "{{ hardening_timezone }}"
+
+# ---------- 6.2 Audit logging ----------
+- name: Enable auditd
+  ansible.builtin.service:
+    name: auditd
+    enabled: true
+    state: started
+
+- name: Install CIS audit rules
+  ansible.builtin.copy:
+    src: 50-cis.rules
+    dest: /etc/audit/rules.d/50-cis.rules
+    mode: "0640"
+  notify: Load audit rules
+
+# ---------- 6.1 File integrity ----------
+- name: Initialize AIDE database (first run takes a few minutes)
+  ansible.builtin.command: aide --init
+  args:
+    creates: /var/lib/aide/aide.db.gz
+  register: aide_init
+
+- name: Activate AIDE database
+  ansible.builtin.command: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+  args:
+    creates: /var/lib/aide/aide.db.gz
+  when: aide_init.changed
+
+- name: Daily AIDE integrity check
+  ansible.builtin.cron:
+    name: aide-check
+    hour: "5"
+    minute: "0"
+    job: "/usr/sbin/aide --check | /usr/bin/logger -t aide"
+
+# ---------- 5.4 PAM (authselect) ----------
+# RHEL 9 manages PAM through authselect profiles; hand edits are overwritten.
+# without-nullok: empty passwords can no longer log in (CIS high severity).
+# with-faillock: makes the faillock.conf settings above actually apply.
+- name: Read the current authselect profile
+  ansible.builtin.command: authselect current
+  register: authselect_current
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# Minimal installs can leave PAM unmanaged ("No existing configuration detected").
+- name: Check whether this authselect version names its local profile "local"
+  ansible.builtin.command: authselect show local
+  register: authselect_local
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: authselect_current.rc != 0
+
+# The local-users profile is "local" in authselect 1.3+ and "minimal" before that.
+# --force replaces the unmanaged PAM files; --backup keeps a copy to roll back to.
+- name: Put PAM under authselect with the hardening features
+  ansible.builtin.command: >-
+    authselect select
+    {{ 'local' if authselect_local.rc == 0 else 'minimal' }}
+    without-nullok with-faillock --force --backup=pre-cis
+  when: authselect_current.rc != 0
+
+- name: Enable missing hardening features on an existing profile
+  ansible.builtin.command: authselect enable-feature {{ item }}
+  loop: [without-nullok, with-faillock]
+  when:
+    - authselect_current.rc == 0
+    - item not in authselect_current.stdout

@@ -1,0 +1,16 @@
+---
+# Usage:
+#   ansible-galaxy collection install -r requirements.yml
+#   ansible-playbook site.yml --check --diff     # dry run first
+#   ansible-playbook site.yml
+
+- name: CIS Level 1 hardening for every RHEL-family host
+  hosts: all
+  roles:
+    - cis_hardening
+
+- name: k3s cluster
+  hosts: k3s
+  serial: 1 # server first, then agents
+  roles:
+    - k3s

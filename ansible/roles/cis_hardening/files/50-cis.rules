@@ -1,0 +1,51 @@
+## CIS 6.2.3 audit rules (RHEL 9). Loaded by augenrules.
+
+# Changes to identity and authentication files
+-w /etc/passwd -p wa -k identity
+-w /etc/group -p wa -k identity
+-w /etc/shadow -p wa -k identity
+-w /etc/gshadow -p wa -k identity
+-w /etc/security/opasswd -p wa -k identity
+
+# Privilege escalation configuration
+-w /etc/sudoers -p wa -k scope
+-w /etc/sudoers.d -p wa -k scope
+
+# Actions taken through sudo
+-w /var/log/sudo.log -p wa -k sudo_log_file
+
+# Login and session records
+-w /var/log/lastlog -p wa -k logins
+-w /var/run/faillock -p wa -k logins
+-w /var/run/utmp -p wa -k session
+-w /var/log/wtmp -p wa -k session
+-w /var/log/btmp -p wa -k session
+
+# System time changes
+-a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k time-change
+-w /etc/localtime -p wa -k time-change
+
+# Network environment changes
+-a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+-w /etc/hosts -p wa -k system-locale
+-w /etc/hostname -p wa -k system-locale
+
+# SELinux policy changes
+-w /etc/selinux -p wa -k MAC-policy
+
+# SSH configuration
+-w /etc/ssh/sshd_config -p wa -k sshd
+-w /etc/ssh/sshd_config.d -p wa -k sshd
+
+# Kernel module loading and unloading
+-a always,exit -F arch=b64 -S init_module,finit_module,delete_module -k kernel_modules
+-w /usr/sbin/insmod -p x -k kernel_modules
+-w /usr/sbin/rmmod -p x -k kernel_modules
+-w /usr/sbin/modprobe -p x -k kernel_modules
+
+# Unsuccessful file access attempts
+-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=unset -k access
+-a always,exit -F arch=b64 -S creat,open,openat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=unset -k access
+
+# Make the configuration immutable until reboot (must be last)
+-e 2

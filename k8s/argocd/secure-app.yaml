@@ -1,0 +1,59 @@
+# Argo CD watches k8s/app on main and keeps the cluster matching Git.
+# Manual changes made with kubectl are reverted automatically (selfHeal).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: secure-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YourGitHubName/devsecops-secure-platform.git
+    targetRevision: main
+    path: k8s/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: secure-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: security-policies
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YourGitHubName/devsecops-secure-platform.git
+    targetRevision: main
+    path: k8s/policies
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ai-ops
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YourGitHubName/devsecops-secure-platform.git
+    targetRevision: main
+    path: k8s/ai-ops
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-ops
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

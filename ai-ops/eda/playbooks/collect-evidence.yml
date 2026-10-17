@@ -1,0 +1,78 @@
+---
+# Read-only evidence collection. Safe to run without approval.
+# Output: ~/incidents/<incident_id>/ on mgmt01.
+
+- name: Record the incident and collect Kubernetes evidence
+  hosts: localhost
+  gather_facts: false
+  vars:
+    payload: "{{ ansible_eda.event.payload }}"
+    target: "{{ payload.target | default({}, true) }}"
+    evidence_dir: "{{ lookup('env', 'HOME') }}/incidents/{{ payload.incident_id }}"
+  tasks:
+    - name: Validate the incident ID
+      ansible.builtin.assert:
+        that: payload.incident_id is match('^[a-f0-9]{12}$')
+
+    - name: Create the evidence folder
+      ansible.builtin.file:
+        path: "{{ evidence_dir }}"
+        state: directory
+        mode: "0700"
+
+    - name: Save the action request
+      ansible.builtin.copy:
+        content: "{{ payload | to_nice_json }}"
+        dest: "{{ evidence_dir }}/action.json"
+        mode: "0600"
+
+    - name: Collect pod evidence
+      when: target.kind | default('') == 'pod'
+      block:
+        - name: Validate pod target
+          ansible.builtin.assert:
+            that:
+              - target.namespace is match('^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$')
+              - target.pod is match('^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$')
+
+        - name: Capture describe, logs, events and network policies
+          ansible.builtin.shell: |
+            kubectl -n {{ target.namespace | quote }} describe pod {{ target.pod | quote }} > describe.txt 2>&1
+            kubectl -n {{ target.namespace | quote }} logs {{ target.pod | quote }} --all-containers --timestamps > logs.txt 2>&1
+            kubectl -n {{ target.namespace | quote }} get events --sort-by=.lastTimestamp > events.txt 2>&1
+            kubectl -n {{ target.namespace | quote }} get networkpolicy -o yaml > networkpolicies.yaml 2>&1
+          args:
+            chdir: "{{ evidence_dir }}"
+          changed_when: false
+          failed_when: false
+
+- name: Collect OT network evidence
+  hosts: otlab01
+  gather_facts: false
+  vars:
+    payload: "{{ ansible_eda.event.payload }}"
+    target: "{{ payload.target | default({}, true) }}"
+    zeek_logs: /home/labadmin/ot-lab/zeek-logs
+    evidence_dir: "{{ lookup('env', 'HOME') }}/incidents/{{ payload.incident_id }}"
+  tasks:
+    - name: Pull Zeek records for the source IP
+      when: target.kind | default('') == 'ot_host'
+      block:
+        - name: Validate OT target
+          ansible.builtin.assert:
+            that: target.ip is match('^172\.30\.0\.[0-9]{1,3}$')
+
+        - name: Extract matching Zeek records
+          ansible.builtin.shell: >
+            grep -h -F '"{{ target.ip }}"'
+            {{ zeek_logs }}/conn.log {{ zeek_logs }}/modbus.log {{ zeek_logs }}/notice.log
+          register: zeek_records
+          changed_when: false
+          failed_when: false
+
+        - name: Save them on mgmt01
+          ansible.builtin.copy:
+            content: "{{ zeek_records.stdout }}\n"
+            dest: "{{ evidence_dir }}/zeek-{{ target.ip }}.jsonl"
+            mode: "0600"
+          delegate_to: localhost

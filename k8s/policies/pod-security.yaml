@@ -1,0 +1,100 @@
+# Baseline workload guardrails, enforced at admission.
+# Scoped to application namespaces so platform components keep working.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/category: Pod security
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: no-privileged
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [secure-app, ai-ops]
+      validate:
+        message: "Privileged containers are not allowed."
+        pattern:
+          spec:
+            =(initContainers):
+              - =(securityContext):
+                  =(privileged): "false"
+            containers:
+              - =(securityContext):
+                  =(privileged): "false"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-run-as-non-root
+  annotations:
+    policies.kyverno.io/category: Pod security
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [secure-app, ai-ops]
+      validate:
+        message: "Pods must set securityContext.runAsNonRoot: true."
+        pattern:
+          spec:
+            securityContext:
+              runAsNonRoot: true
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+  annotations:
+    policies.kyverno.io/category: Reliability
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: cpu-and-memory-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [secure-app, ai-ops]
+      validate:
+        message: "Every container must set CPU and memory limits."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    cpu: "?*"
+                    memory: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/category: Supply chain security
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-pinned-image
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [secure-app, ai-ops]
+      validate:
+        message: "Images must be pinned by digest or a version tag, not ':latest'."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest"

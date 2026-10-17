@@ -1,0 +1,52 @@
+name: terraform
+
+on:
+  pull_request:
+    paths: ["terraform/**"]
+  push:
+    branches: [main]
+    paths: ["terraform/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false
+      - run: terraform validate
+      - uses: terraform-linters/setup-tflint@v4
+      - run: tflint --init && tflint
+
+  # Only meaningful once state lives in S3 (see versions.tf).
+  # Set repo variables AWS_PLAN_ROLE_ARN and TF_REMOTE_STATE=true to enable.
+  plan:
+    needs: validate
+    if: vars.TF_REMOTE_STATE == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: terraform/aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-2
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      - run: terraform plan -input=false -lock=false -no-color
+        env:
+          TF_VAR_owner: ${{ github.repository_owner }}
+          TF_VAR_github_repo: ${{ github.repository }}
+          TF_VAR_budget_email: ${{ vars.BUDGET_EMAIL }}

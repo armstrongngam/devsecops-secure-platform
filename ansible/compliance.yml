@@ -1,0 +1,78 @@
+---
+# Scores each host against the CIS Server Level 1 profile with OpenSCAP
+# and copies the HTML report to ./reports/. Run before and after site.yml
+# and put both scores in the README: that before/after is your proof.
+
+- name: OpenSCAP CIS compliance scan
+  hosts: all
+  vars:
+    scap_profile: xccdf_org.ssgproject.content_profile_cis_server_l1
+    report_dir: "{{ playbook_dir }}/reports"
+    # Each distribution ships content whose platform check (CPE) matches only
+    # that distribution. RHEL content on Rocky marks every rule notapplicable.
+    scap_ds_prefix:
+      Rocky: rl
+      RedHat: rhel
+      AlmaLinux: almalinux
+      CentOS: cs
+    scap_datastream: >-
+      /usr/share/xml/scap/ssg/content/ssg-{{ scap_ds_prefix[ansible_facts['distribution']]
+      | default('rhel') }}{{ ansible_facts['distribution_major_version'] }}-ds.xml
+  tasks:
+    - name: Install OpenSCAP and SCAP Security Guide
+      ansible.builtin.dnf:
+        name: [openscap-scanner, scap-security-guide]
+        state: present
+
+    - name: Check the datastream for this distribution exists
+      ansible.builtin.stat:
+        path: "{{ scap_datastream }}"
+      register: datastream
+
+    - name: Fail clearly if it is missing
+      ansible.builtin.assert:
+        that: datastream.stat.exists
+        fail_msg: "No SCAP datastream at {{ scap_datastream }} for {{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_major_version'] }}"
+        success_msg: "Using {{ scap_datastream }}"
+
+    - name: Run the scan (exit code 2 means some rules failed, which is expected)
+      ansible.builtin.command: >
+        oscap xccdf eval
+        --profile {{ scap_profile }}
+        --results /tmp/oscap-results.xml
+        --report /tmp/oscap-report.html
+        {{ scap_datastream }}
+      register: oscap
+      changed_when: false
+      failed_when: oscap.rc not in [0, 2]
+
+    - name: Summarize pass/fail counts
+      ansible.builtin.shell: |
+        set -o pipefail
+        pass=$(grep -cE '<([a-z]+:)?result>pass</' /tmp/oscap-results.xml || true)
+        fail=$(grep -cE '<([a-z]+:)?result>fail</' /tmp/oscap-results.xml || true)
+        if [ $((pass + fail)) -eq 0 ]; then
+          echo "pass=0 fail=0 score=n/a (no rules evaluated; check the report)"
+        else
+          echo "pass=$pass fail=$fail score=$(( 100 * pass / (pass + fail) ))%"
+        fi
+      args:
+        executable: /bin/bash
+      register: summary
+      changed_when: false
+
+    - name: Show the score
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ summary.stdout }}"
+
+    - name: Copy report to the control node
+      ansible.builtin.fetch:
+        src: /tmp/oscap-report.html
+        dest: "{{ report_dir }}/{{ inventory_hostname }}-cis-l1.html"
+        flat: true
+
+    # A scan that evaluated nothing looks like a clean server. Never let it pass.
+    - name: Fail if no rules were evaluated
+      ansible.builtin.assert:
+        that: "'n/a' not in summary.stdout"
+        fail_msg: "Zero rules evaluated: wrong datastream or platform mismatch. Check the report."

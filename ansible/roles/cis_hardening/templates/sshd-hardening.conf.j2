@@ -1,0 +1,18 @@
+# Managed by Ansible (cis_hardening). Local edits will be overwritten.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+MaxAuthTries 3
+MaxSessions 4
+LoginGraceTime 60
+ClientAliveInterval 300
+ClientAliveCountMax 2
+X11Forwarding no
+AllowTcpForwarding no
+IgnoreRhosts yes
+HostbasedAuthentication no
+LogLevel VERBOSE
+Banner /etc/issue.net
+AllowGroups {{ hardening_ssh_allow_groups | join(' ') }}

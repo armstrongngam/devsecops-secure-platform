@@ -1,0 +1,24 @@
+---
+- name: Restart sshd
+  ansible.builtin.service:
+    name: sshd
+    state: restarted
+
+# The rules end with "-e 2" (immutable), so after the first load any
+# change only takes effect after a reboot. Report that instead of failing.
+- name: Load audit rules
+  ansible.builtin.command: augenrules --load
+  register: augenrules
+  changed_when: true
+  failed_when: false
+  notify: Report audit reboot
+
+- name: Report audit reboot
+  ansible.builtin.debug:
+    msg: "Audit rules are immutable until reboot; reboot {{ inventory_hostname }} to apply changes."
+  when: augenrules.rc != 0
+
+- name: Reload firewalld
+  ansible.builtin.service:
+    name: firewalld
+    state: reloaded

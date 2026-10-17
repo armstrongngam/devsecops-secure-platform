@@ -1,0 +1,139 @@
+# Local language model server. Runs non-root with a read-only root
+# filesystem; models live on a persistent volume so they download once.
+# (No YAML anchors: Argo CD's kustomize renders plain YAML most reliably.)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 15Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+      - name: pull-model
+        image: ollama
+        command:
+        - /bin/sh
+        - -c
+        args:
+        - ollama serve >/tmp/serve.log 2>&1 & pid=$!; sleep 5; ollama pull "$OLLAMA_MODEL"; rc=$?; kill $pid; exit $rc
+        env:
+        - name: OLLAMA_MODEL
+          value: qwen2.5:3b
+        - name: OLLAMA_MODELS
+          value: /models
+        - name: OLLAMA_HOST
+          value: 0.0.0.0:11434
+        - name: HOME
+          value: /tmp
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          limits:
+            cpu: '2'
+            memory: 2Gi
+        volumeMounts:
+        - name: models
+          mountPath: /models
+        - name: tmp
+          mountPath: /tmp
+      containers:
+      - name: ollama
+        image: ollama
+        args:
+        - serve
+        env:
+        - name: OLLAMA_MODEL
+          value: qwen2.5:3b
+        - name: OLLAMA_MODELS
+          value: /models
+        - name: OLLAMA_HOST
+          value: 0.0.0.0:11434
+        - name: HOME
+          value: /tmp
+        ports:
+        - name: http
+          containerPort: 11434
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: '1'
+            memory: 4Gi
+          limits:
+            cpu: '3'
+            memory: 8Gi
+        readinessProbe:
+          httpGet:
+            path: /api/tags
+            port: http
+          periodSeconds: 15
+        livenessProbe:
+          httpGet:
+            path: /api/tags
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        volumeMounts:
+        - name: models
+          mountPath: /models
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: models
+        persistentVolumeClaim:
+          claimName: ollama-models
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+spec:
+  selector:
+    app: ollama
+  ports:
+  - name: http
+    port: 11434
+    targetPort: http

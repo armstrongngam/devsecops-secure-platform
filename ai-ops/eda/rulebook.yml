@@ -1,0 +1,47 @@
+---
+# Event-Driven Ansible: turns approved incidents into runbook executions.
+# Only the triage service can call it (bearer token), and it only accepts
+# the fixed runbook names below. There is no rule that runs arbitrary input.
+#
+#   ansible-rulebook -r rulebook.yml -i inventory.yml --env-vars EDA_WEBHOOK_TOKEN
+- name: AI-assisted incident response
+  hosts: all
+  sources:
+    - ansible.eda.webhook:
+        host: 0.0.0.0
+        port: 5000
+        token: "{{ EDA_WEBHOOK_TOKEN }}"
+  rules:
+    - name: Collect evidence (read-only, may run automatically)
+      condition: >-
+        event.payload.type == "approved_action"
+        and event.payload.runbook == "collect_evidence"
+      action:
+        run_playbook:
+          name: playbooks/collect-evidence.yml
+
+    - name: Quarantine a pod (human-approved)
+      condition: >-
+        event.payload.type == "approved_action"
+        and event.payload.runbook == "quarantine_pod"
+        and event.payload.target.kind == "pod"
+        and event.payload.approved_by != "auto-policy"
+      action:
+        run_playbook:
+          name: playbooks/quarantine-pod.yml
+
+    - name: Block an OT host (human-approved)
+      condition: >-
+        event.payload.type == "approved_action"
+        and event.payload.runbook == "block_ot_host"
+        and event.payload.target.kind == "ot_host"
+        and event.payload.approved_by != "auto-policy"
+      action:
+        run_playbook:
+          name: playbooks/block-ot-host.yml
+
+    - name: Record anything unexpected
+      condition: event.payload is defined
+      action:
+        debug:
+          msg: "Ignored event that matched no runbook rule"

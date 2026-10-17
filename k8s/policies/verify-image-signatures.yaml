@@ -1,0 +1,33 @@
+# Admission control: a pod in secure-app or ai-ops may only run an image that was
+# signed by THIS repo's CI workflow on main (Sigstore keyless / GitHub OIDC).
+# An image built on a laptop, or pushed by anyone else, is rejected.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-image-signatures
+  annotations:
+    policies.kyverno.io/title: Verify image signatures
+    policies.kyverno.io/category: Supply chain security
+spec:
+  validationFailureAction: Enforce
+  background: false
+  webhookTimeoutSeconds: 30
+  rules:
+    - name: require-ci-signature
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [secure-app, ai-ops]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/yourgithubname/devsecops-secure-platform/*"
+          mutateDigest: true
+          verifyDigest: true
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/YourGitHubName/devsecops-secure-platform/.github/workflows/ci.yml@refs/heads/main"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

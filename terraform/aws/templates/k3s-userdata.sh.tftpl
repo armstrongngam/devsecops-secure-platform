@@ -1,0 +1,24 @@
+#!/bin/bash
+# Bootstraps a single-node k3s cluster on Amazon Linux 2023.
+set -euo pipefail
+
+dnf -y update
+dnf -y install amazon-ssm-agent audit
+systemctl enable --now amazon-ssm-agent auditd
+
+# Kernel settings recommended by the CIS Kubernetes benchmark.
+cat >/etc/sysctl.d/90-k3s-cis.conf <<'EOF'
+vm.panic_on_oom=0
+vm.overcommit_memory=1
+kernel.panic=10
+kernel.panic_on_oops=1
+EOF
+sysctl --system
+
+# Install k3s with encrypted secrets at rest and a private kubeconfig.
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
+  --secrets-encryption \
+  --write-kubeconfig-mode 0600 \
+  --protect-kernel-defaults" sh -
+
+echo "k3s bootstrap complete" > /var/log/k3s-bootstrap.done

@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: ai-ops
+resources:
+  - namespace.yaml
+  - ollama.yaml
+  - triage.yaml
+  - networkpolicy.yaml
+images:
+  # CI rewrites this entry with the signed digest on every main build.
+  - name: ai-triage
+    newName: ghcr.io/yourgithubname/devsecops-secure-platform/ai-triage
+    newTag: latest
+  # Third-party image: pinned version. Next step: pin by digest too.
+  - name: ollama
+    newName: ollama/ollama
+    newTag: "0.40.2"

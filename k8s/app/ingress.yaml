@@ -1,0 +1,18 @@
+# k3s ships the Traefik ingress controller. Add "<node-ip> secure-app.lab"
+# to your hosts file, then browse to http://secure-app.lab/api/info
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: secure-app
+spec:
+  rules:
+    - host: secure-app.lab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: secure-app
+                port:
+                  name: http

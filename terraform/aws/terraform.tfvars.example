@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (which is git-ignored) and fill in.
+owner              = "armstrong"
+github_repo        = "YourGitHubName/devsecops-secure-platform"
+budget_email       = "you@example.com"
+monthly_budget_usd = 20
+create_node        = true

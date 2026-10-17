@@ -1,0 +1,35 @@
+# helm upgrade --install monitoring prometheus-community/kube-prometheus-stack \
+#   -n monitoring --create-namespace -f k8s/monitoring/kube-prometheus-stack-values.yaml
+# Sized for a small lab node.
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    # Pick up ServiceMonitors and rules from every namespace.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests: { cpu: 10m, memory: 64Mi }
+
+grafana:
+  # Create first: kubectl -n monitoring create secret generic grafana-admin \
+  #   --from-literal=admin-user=admin --from-literal=admin-password='CHANGE-ME'
+  admin:
+    existingSecret: grafana-admin
+    userKey: admin-user
+    passwordKey: admin-password
+  ingress:
+    enabled: true
+    hosts: [grafana.lab]
+
+# k3s bundles these control-plane parts in one process; scraping them
+# separately only produces "target down" noise.
+kubeControllerManager: { enabled: false }
+kubeScheduler: { enabled: false }
+kubeProxy: { enabled: false }
+kubeEtcd: { enabled: false }

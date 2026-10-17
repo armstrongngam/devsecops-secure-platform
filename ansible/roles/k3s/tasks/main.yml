@@ -1,0 +1,92 @@
+---
+# Installs k3s with SELinux support, secrets encryption at rest and
+# CIS kernel defaults. Servers come from [k3s_server], agents from [k3s_agent].
+
+- name: Kernel parameters required by --protect-kernel-defaults
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/90-k3s.conf
+    reload: true
+  loop:
+    - { key: vm.panic_on_oom, value: 0 }
+    - { key: vm.overcommit_memory, value: 1 }
+    - { key: kernel.panic, value: 10 }
+    - { key: kernel.panic_on_oops, value: 1 }
+    - { key: net.ipv4.ip_forward, value: 1 }
+
+- name: Trust pod and service networks in firewalld
+  ansible.posix.firewalld:
+    zone: trusted
+    source: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    - "{{ k3s_cluster_cidr }}"
+    - "{{ k3s_service_cidr }}"
+
+- name: Check whether k3s is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_bin
+
+- name: Download the k3s installer
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /usr/local/sbin/k3s-install.sh
+    mode: "0700"
+  when: not k3s_bin.stat.exists
+
+- name: Install k3s server
+  ansible.builtin.command: /usr/local/sbin/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    INSTALL_K3S_EXEC: >-
+      server --selinux --secrets-encryption
+      --write-kubeconfig-mode 0600
+      --protect-kernel-defaults
+      --cluster-cidr {{ k3s_cluster_cidr }}
+      --service-cidr {{ k3s_service_cidr }}
+  when:
+    - not k3s_bin.stat.exists
+    - inventory_hostname in groups['k3s_server']
+  changed_when: true
+
+- name: Read the cluster join token
+  ansible.builtin.slurp:
+    src: /var/lib/rancher/k3s/server/node-token
+  register: k3s_token
+  delegate_to: "{{ groups['k3s_server'][0] }}"
+  when: inventory_hostname in groups['k3s_agent']
+  no_log: true
+
+- name: Install k3s agent
+  ansible.builtin.command: /usr/local/sbin/k3s-install.sh
+  environment:
+    INSTALL_K3S_VERSION: "{{ k3s_version }}"
+    K3S_URL: "https://{{ hostvars[groups['k3s_server'][0]].ansible_host }}:6443"
+    K3S_TOKEN: "{{ k3s_token.content | b64decode | trim }}"
+    INSTALL_K3S_EXEC: "agent --selinux --protect-kernel-defaults"
+  when:
+    - not k3s_bin.stat.exists
+    - inventory_hostname in groups['k3s_agent']
+  changed_when: true
+  no_log: true
+
+- name: Create ~/.kube for the admin user (server only)
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    mode: "0700"
+  when: inventory_hostname in groups['k3s_server']
+
+- name: Copy kubeconfig to the admin user's home (server only)
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    mode: "0600"
+  when: inventory_hostname in groups['k3s_server']

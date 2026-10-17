@@ -1,0 +1,18 @@
+[Unit]
+Description=Event-Driven Ansible incident response rulebook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=labadmin
+WorkingDirectory=/home/labadmin/devsecops-secure-platform/ai-ops/eda
+EnvironmentFile=/etc/ai-ops.env
+ExecStart=/home/labadmin/eda-venv/bin/ansible-rulebook -r rulebook.yml -i inventory.yml --env-vars EDA_WEBHOOK_TOKEN
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

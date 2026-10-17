@@ -1,0 +1,40 @@
+---
+# Human-approved block of one rogue host on the OT cell.
+# Docker evaluates the DOCKER-USER chain for container-to-container traffic,
+# so a DROP here cuts the rogue host off from the PLC.
+
+- name: Block a rogue OT host
+  hosts: otlab01
+  gather_facts: false
+  become: true
+  vars:
+    payload: "{{ ansible_eda.event.payload }}"
+    ip: "{{ payload.target.ip }}"
+    # PLC, HMI and engineering workstation: blocking these causes the outage.
+    protected: ["172.30.0.10", "172.30.0.20", "172.30.0.30"]
+  tasks:
+    - name: Re-validate the target (defense in depth)
+      ansible.builtin.assert:
+        that:
+          - payload.incident_id is match('^[a-f0-9]{12}$')
+          - ip is match('^172\.30\.0\.([1-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-4])$')
+          - ip not in protected
+          - payload.approved_by != 'auto-policy'
+        fail_msg: "Refusing block: target or approval failed validation."
+
+    - name: Drop all traffic from the rogue host
+      ansible.builtin.iptables:
+        chain: DOCKER-USER
+        source: "{{ ip }}"
+        jump: DROP
+        action: insert
+        comment: "incident {{ payload.incident_id }}"
+
+    - name: Record the action on mgmt01
+      ansible.builtin.lineinfile:
+        path: "{{ lookup('env', 'HOME') }}/incidents/{{ payload.incident_id }}/actions.log"
+        create: true
+        mode: "0600"
+        line: "{{ now(utc=true).isoformat() }} blocked {{ ip }} on otlab01 approved_by={{ payload.approved_by }}"
+      delegate_to: localhost
+      become: false

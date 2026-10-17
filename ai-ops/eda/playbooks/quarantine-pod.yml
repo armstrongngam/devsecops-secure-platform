@@ -1,0 +1,56 @@
+---
+# Human-approved containment of one pod.
+# The pod keeps running (for forensics) but:
+#   - label app=quarantined removes it from the Service and its ReplicaSet,
+#     so Kubernetes starts a clean replacement immediately;
+#   - label quarantine=true matches the deny-all NetworkPolicy in k8s/app.
+
+- name: Quarantine a pod
+  hosts: localhost
+  gather_facts: false
+  vars:
+    payload: "{{ ansible_eda.event.payload }}"
+    ns: "{{ payload.target.namespace }}"
+    pod: "{{ payload.target.pod }}"
+    # Platform namespaces are never touched by automation.
+    allowed_namespaces: [secure-app]
+    evidence_dir: "{{ lookup('env', 'HOME') }}/incidents/{{ payload.incident_id }}"
+  tasks:
+    - name: Re-validate everything (defense in depth; never trust the caller)
+      ansible.builtin.assert:
+        that:
+          - payload.incident_id is match('^[a-f0-9]{12}$')
+          - ns in allowed_namespaces
+          - pod is match('^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$')
+          - payload.approved_by != 'auto-policy'
+        fail_msg: "Refusing quarantine: target or approval failed validation."
+
+    - name: Snapshot the pod before changing it
+      ansible.builtin.shell: >
+        mkdir -p {{ evidence_dir | quote }} &&
+        kubectl -n {{ ns | quote }} get pod {{ pod | quote }} -o yaml
+        > {{ evidence_dir | quote }}/pod-before-quarantine.yaml
+      changed_when: false
+
+    - name: Apply quarantine labels
+      ansible.builtin.command:
+        argv:
+          - kubectl
+          - -n
+          - "{{ ns }}"
+          - label
+          - pod
+          - "{{ pod }}"
+          - app=quarantined
+          - quarantine=true
+          - "incident={{ payload.incident_id }}"
+          - --overwrite
+      register: label_result
+      changed_when: "'labeled' in label_result.stdout"
+
+    - name: Record the action
+      ansible.builtin.lineinfile:
+        path: "{{ evidence_dir }}/actions.log"
+        create: true
+        mode: "0600"
+        line: "{{ now(utc=true).isoformat() }} quarantined {{ ns }}/{{ pod }} approved_by={{ payload.approved_by }}"

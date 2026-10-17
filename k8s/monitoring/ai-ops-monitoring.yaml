@@ -1,0 +1,40 @@
+# Apply after kube-prometheus-stack is installed (needs its CRDs).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ai-triage
+  namespace: ai-ops
+spec:
+  selector:
+    matchLabels:
+      app: ai-triage
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: ai-triage-alerts
+  namespace: ai-ops
+spec:
+  groups:
+    - name: ai-triage
+      rules:
+        - alert: AITriageModelDown
+          expr: increase(triage_llm_failures_total[15m]) > 3
+          labels: { severity: warning }
+          annotations:
+            summary: "AI triage cannot reach the model; alerts fall back to manual review"
+        - alert: AITriageGuardrailSpike
+          expr: increase(triage_guardrail_rejections_total[15m]) > 3
+          labels: { severity: warning }
+          annotations:
+            summary: "Guardrails rejected several model answers: possible prompt-injection campaign or model drift"
+        - alert: AITriageSlow
+          expr: histogram_quantile(0.9, sum(rate(triage_llm_seconds_bucket[30m])) by (le)) > 60
+          for: 30m
+          labels: { severity: info }
+          annotations:
+            summary: "90th percentile triage time is over 60 seconds; consider a smaller model"

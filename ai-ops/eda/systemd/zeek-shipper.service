@@ -1,0 +1,16 @@
+[Unit]
+Description=Forward Zeek notices from the OT cell to AI triage
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=labadmin
+EnvironmentFile=/etc/ai-ops.env
+ExecStart=/home/labadmin/devsecops-secure-platform/ai-ops/eda/zeek-shipper.sh
+Restart=always
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

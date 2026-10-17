@@ -1,0 +1,92 @@
+# AI triage service. Tokens come from the ai-ops-tokens Secret, which is
+# created by scripts/bootstrap-ai-ops.sh and never stored in Git.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-triage
+  labels:
+    app: ai-triage
+spec:
+  replicas: 1 # in-memory incident store; see docs/AI-OPS.md
+  selector:
+    matchLabels:
+      app: ai-triage
+  template:
+    metadata:
+      labels:
+        app: ai-triage
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: triage
+          image: ai-triage
+          imagePullPolicy: Always
+          ports:
+            - { name: http, containerPort: 8080 }
+          env:
+            - { name: OLLAMA_URL, value: "http://ollama.ai-ops.svc.cluster.local:11434" }
+            - { name: OLLAMA_MODEL, value: "qwen2.5:3b" }
+            - { name: OLLAMA_TIMEOUT, value: "120" }
+            - { name: EDA_URL, value: "http://192.168.10.10:5000/endpoint" }
+            - name: INGEST_TOKEN
+              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: ingest-token } }
+            - name: APPROVER_TOKEN
+              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: approver-token } }
+            - name: EDA_TOKEN
+              valueFrom: { secretKeyRef: { name: ai-ops-tokens, key: eda-token } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { cpu: 500m, memory: 256Mi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-triage
+  labels:
+    app: ai-triage
+spec:
+  selector:
+    app: ai-triage
+  ports:
+    - { name: http, port: 80, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ai-triage
+spec:
+  rules:
+    - host: triage.lab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ai-triage
+                port:
+                  name: http
