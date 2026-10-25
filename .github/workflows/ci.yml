@@ -133,6 +133,22 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
+      # Unit tests don't prove the server starts. Run the real image, read-only
+      # like in Kubernetes, and require /healthz to answer before scanning or publishing.
+      - name: Smoke test (container starts and /healthz answers)
+        env:
+          IMAGE: ${{ steps.vars.outputs.image }}:${{ github.sha }}
+        run: |
+          docker run -d --name smoke -p 8080:8080 --read-only --tmpfs /tmp "$IMAGE"
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8080/healthz; then
+              echo; echo "healthy after ${i}s"; docker rm -f smoke >/dev/null; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container did not become healthy within 20s"
+          docker logs smoke; docker rm -f smoke; exit 1
+
       - name: Vulnerability scan (fail on fixable HIGH/CRITICAL)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # 0.36.0
         with:
