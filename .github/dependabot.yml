@@ -1,14 +1,26 @@
+# Dependency updates for every component that ships code.
+# Policy: minor and patch updates arrive grouped (one PR per ecosystem);
+# major updates arrive one per PR so each breaking change gets its own review.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly }
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: pip
-    directory: /app
+    directories: [/app, /ai-ops/triage]
     schedule: { interval: weekly }
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
   - package-ecosystem: docker
-    directory: /app
+    directories: [/app, /ai-ops/triage]
     schedule: { interval: weekly }
+
   - package-ecosystem: terraform
     directory: /terraform/aws
     schedule: { interval: weekly }
