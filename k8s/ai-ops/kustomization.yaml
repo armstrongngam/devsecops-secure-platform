@@ -9,7 +9,7 @@ resources:
   # CI rewrites this entry with the signed digest on every main build.
   # Third-party image: pinned version. Next step: pin by digest too.
 images:
-- digest: sha256:e853807aa24d5841b0a01f01265ebd6e50aaed550552656bdb75c49d5d40c8ad
+- digest: sha256:c5cb314cfdeb55b0eb8e782c6610d47ea8d710242b71e67a9ea0235edd910bc4
   name: ai-triage
   newName: ghcr.io/armstrongngam/devsecops-secure-platform/ai-triage
 - name: ollama
