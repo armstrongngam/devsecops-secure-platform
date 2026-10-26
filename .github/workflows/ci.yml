@@ -36,7 +36,7 @@ jobs:
       run:
         working-directory: ${{ matrix.dir }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -50,7 +50,7 @@ jobs:
     name: Secret scan (Gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v3
@@ -66,7 +66,7 @@ jobs:
     container:
       image: semgrep/semgrep
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: >-
           semgrep scan
           --config p/python --config p/flask --config p/dockerfile
@@ -84,7 +84,7 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: bridgecrewio/checkov-action@v12
         with:
           directory: .
@@ -114,7 +114,7 @@ jobs:
       id-token: write # keyless signing via Sigstore
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - id: vars
         run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.service }}" >> "$GITHUB_OUTPUT"
@@ -236,7 +236,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v4
         with:
           pattern: digest-*

@@ -17,7 +17,7 @@ jobs:
       run:
         working-directory: terraform/aws
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: hashicorp/setup-terraform@v3
       - run: terraform fmt -check -recursive
       - run: terraform init -backend=false
@@ -38,7 +38,7 @@ jobs:
       run:
         working-directory: terraform/aws
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
