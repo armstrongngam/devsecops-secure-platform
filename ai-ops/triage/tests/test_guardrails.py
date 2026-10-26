@@ -87,7 +87,7 @@ def test_alert_cannot_close_the_fence():
 
 
 def test_control_and_invisible_characters_removed():
-    assert clean_text("a‮b\u200bc\nd") == "a b c d"
+    assert clean_text("a\u202eb\u200bc\nd") == "a b c d"
 
 
 def test_fields_are_length_limited():
