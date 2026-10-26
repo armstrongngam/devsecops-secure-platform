@@ -31,7 +31,8 @@ class OllamaClient:
             self.url, data=body, headers={"Content-Type": "application/json"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - fixed internal URL
+            # URL comes from fixed configuration, never from alert input (bandit S310 reviewed).
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 payload = json.load(resp)
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise LLMError(f"ollama request failed: {exc}") from exc

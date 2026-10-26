@@ -87,7 +87,7 @@ def test_alert_cannot_close_the_fence():
 
 
 def test_control_and_invisible_characters_removed():
-    assert clean_text("a‮b​c\nd") == "a b c d"
+    assert clean_text("a‮b\u200bc\nd") == "a b c d"
 
 
 def test_fields_are_length_limited():
@@ -192,7 +192,7 @@ def test_read_only_runbook_runs_automatically():
 # ---------- Failure handling ----------
 
 def test_model_down_falls_back_safely():
-    client, dispatcher = make_client(FakeLLM(error=LLMError("connection refused")))
+    client, _dispatcher = make_client(FakeLLM(error=LLMError("connection refused")))
     incident = post(client, "/events/zeek", ZEEK_WRITE).get_json()
     assert incident["decision"]["needs_human"] is True
     assert incident["decision"]["runbook"] == "collect_evidence"

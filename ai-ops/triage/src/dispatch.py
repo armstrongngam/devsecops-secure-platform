@@ -27,7 +27,8 @@ class EdaDispatcher:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310 - fixed internal URL
+            # URL comes from fixed configuration, never from alert input (bandit S310 reviewed).
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                 if resp.status >= 300:
                     raise DispatchError(f"EDA returned HTTP {resp.status}")
         except urllib.error.URLError as exc:

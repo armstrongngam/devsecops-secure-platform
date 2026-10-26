@@ -43,7 +43,7 @@ def call(method, path, token, body=None):
         data=json.dumps(body).encode() if body is not None else None,
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 - lab URL
+    with urllib.request.urlopen(req, timeout=30) as resp:
         return json.load(resp)
 
 
