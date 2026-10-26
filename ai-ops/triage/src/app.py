@@ -15,9 +15,9 @@ import os
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from collections import OrderedDict
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 
 from flask import Flask, Response, abort, jsonify, request
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -82,7 +82,7 @@ def _secret(name: str) -> str:
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def create_app(
