@@ -9,6 +9,6 @@ resources:
 - networkpolicy.yaml
 # CI rewrites this block with the signed image digest on every main build.
 images:
-- digest: sha256:5e9836c8eebe6f07cf3e1b7830593e1853eb802d53ee097d0cc9bc74b3bd977d
+- digest: sha256:43fa2e1bdc48cbf7234ba58a8e2fa1bf2ee7cf64ab25100b25c4c1f3a05528b0
   name: secure-app
   newName: ghcr.io/armstrongngam/devsecops-secure-platform/secure-app
