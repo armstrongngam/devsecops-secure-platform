@@ -122,7 +122,7 @@ jobs:
       - uses: docker/setup-buildx-action@v4
 
       - name: Build image locally
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.dir }}
           load: true
@@ -184,7 +184,7 @@ jobs:
       - name: Push image
         id: push
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.dir }}
           push: true
